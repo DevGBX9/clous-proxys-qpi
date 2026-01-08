@@ -56,7 +56,7 @@ async def validate_and_add(session, semaphore, proxy_addr, existing_proxies, loc
             proxy_data = {
                 "address": proxy_addr, 
                 "last_checked": time.time(), 
-                "created_at": time.time(), # Adding creation timestamp
+                "created_at": time.time(), 
                 "status": "active"
             }
             try:
@@ -94,36 +94,45 @@ async def fetch_and_store_loop(session):
         
         await asyncio.sleep(FETCH_INTERVAL)
 
-async def check_and_delete(session, semaphore, key, proxy_addr):
-    """Immediate cleanup: Removes proxy if it fails once."""
+async def check_and_delete(session, semaphore, target_url, key, proxy_addr):
+    """Immediate cleanup: Removes proxy from target_url if it fails once."""
     async with semaphore:
         if not await is_proxy_alive(session, proxy_addr):
             try:
-                async with session.delete(f"{FIREBASE_BASE_URL}/{key}.json") as res:
+                async with session.delete(f"{target_url}/{key}.json") as res:
                     if res.status == 200:
-                        logging.warning(f"[-] REMOVED: {proxy_addr}")
+                        pool_name = "stable" if "stable" in target_url else "main"
+                        logging.warning(f"[-] REMOVED from {pool_name}: {proxy_addr}")
             except Exception as e:
-                logging.error(f"Delete error for {proxy_addr}: {e}")
+                logging.error(f"Delete error for {proxy_addr} in {target_url}: {e}")
 
 async def cleanup_loop(session):
-    """Async loop for continuous highly-parallel cleanup."""
-    logging.info("Starting Continuous Async Cleanup...")
+    """Async loop for continuous cleanup of BOTH main and stable pools."""
+    logging.info("Starting Dual-Pool Continuous Cleanup...")
     semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
     
     while True:
         try:
+            # Scan Main Pool
             async with session.get(f"{FIREBASE_BASE_URL}.json") as response:
                 if response.status == 200:
                     data = await response.json()
                     if data:
-                        logging.info(f"Scanning {len(data)} proxies in DB...")
-                        tasks = [check_and_delete(session, semaphore, key, val.get("address")) 
+                        logging.info(f"Checking {len(data)} proxies in Main Pool...")
+                        tasks = [check_and_delete(session, semaphore, FIREBASE_BASE_URL, key, val.get("address")) 
                                  for key, val in data.items() if val.get("address")]
                         await asyncio.gather(*tasks)
-                    else:
-                        logging.debug("DB is empty.")
-                else:
-                    logging.error(f"Firebase fetch error: {response.status}")
+
+            # Scan Stable Pool
+            async with session.get(f"{STABLE_PROXIES_URL}.json") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data:
+                        logging.info(f"Checking {len(data)} proxies in Stable Pool...")
+                        tasks = [check_and_delete(session, semaphore, STABLE_PROXIES_URL, key, val.get("address")) 
+                                 for key, val in data.items() if val.get("address")]
+                        await asyncio.gather(*tasks)
+                        
         except Exception as e:
             logging.error(f"Cleanup loop error: {e}")
             
@@ -140,16 +149,14 @@ async def stability_monitor_loop(session):
                     data = await response.json()
                     if data:
                         current_time = time.time()
-                        # Get those already in stable to avoid double-posting
                         stable_existing = await get_existing_proxies(session, STABLE_PROXIES_URL)
                         
                         for key, val in data.items():
                             p_addr = val.get("address")
-                            created_at = val.get("created_at", current_time) # Default to now if missing
+                            created_at = val.get("created_at", current_time)
                             
                             age = current_time - created_at
                             if age >= STABILITY_THRESHOLD and p_addr not in stable_existing:
-                                # Promote to stable
                                 stable_data = {
                                     "address": p_addr,
                                     "promoted_at": current_time,
@@ -169,9 +176,8 @@ async def stability_monitor_loop(session):
 
 async def main():
     async with aiohttp.ClientSession() as session:
-        logging.info("!!! ASYNC PROXY MANAGER (VER 5.0) STARTED !!!")
+        logging.info("!!! ASYNC PROXY MANAGER (VER 6.0) STARTED !!!")
         
-        # Run all three loops concurrently
         await asyncio.gather(
             fetch_and_store_loop(session),
             cleanup_loop(session),

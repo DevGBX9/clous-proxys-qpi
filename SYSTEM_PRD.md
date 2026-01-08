@@ -64,4 +64,7 @@ print(f"Using proxy: {proxy}")
 - **Timeout**: 10 seconds (Balance between speed and allowing "heavy" proxies).
 
 ## 6. Maintenance and Scalability
-The system is self-healing. No manual database cleanup is required as the **Cleanup Loop** handles removals in real-time. To scale, increase `CONCURRENCY_LIMIT` if the host machine has high network throughput capability.
+The system is fully self-healing for both pools:
+- **Main Pool Maintenance**: The **Cleanup Loop** removes dead proxies every 2 seconds.
+- **Stable Pool Maintenance**: The **Cleanup Loop** also monitors the `/stable_proxies` path, ensuring that if a previously stable proxy dies, it is removed immediately from the VIP list.
+- **Scalability**: To scale, increase `CONCURRENCY_LIMIT` if the host machine has high network throughput capability.

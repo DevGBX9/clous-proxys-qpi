@@ -3,6 +3,8 @@ import aiohttp
 import time
 import logging
 import json
+import os
+from aiohttp import web
 
 # Configuration
 PROXY_API_URL = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&skip=0&limit=2000"
@@ -174,14 +176,34 @@ async def stability_monitor_loop(session):
             
         await asyncio.sleep(STABILITY_CHECK_INTERVAL)
 
+# --- Render Health Check Server ---
+async def handle_health(request):
+    return web.Response(text="Proxy Manager is running!", status=200)
+
+async def start_dummy_server():
+    """Starts a minimal web server for Render health checks."""
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render provides PORT environment variable
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    
+    logging.info(f"Starting Health Check Server on port {port}...")
+    await site.start()
+
 async def main():
     async with aiohttp.ClientSession() as session:
-        logging.info("!!! ASYNC PROXY MANAGER (VER 6.0) STARTED !!!")
+        logging.info("!!! ASYNC PROXY MANAGER (VER 7.0) STARTED !!!")
         
+        # Run all three loops + health check server concurrently
         await asyncio.gather(
             fetch_and_store_loop(session),
             cleanup_loop(session),
-            stability_monitor_loop(session)
+            stability_monitor_loop(session),
+            start_dummy_server()
         )
 
 if __name__ == "__main__":

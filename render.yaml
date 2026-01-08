@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: proxy-manager
     runtime: python
     buildCommand: pip install -r requirements.txt
